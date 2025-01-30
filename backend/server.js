@@ -19,7 +19,7 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
     cors: {
-        origin: ["http://localhost:3000", "https://ef13-47-199-12-99.ngrok-free.app"], // Frontend URL (React app)
+        origin: ["http://localhost:3000", "https://4b9c-47-199-12-99.ngrok-free.app"], // Frontend URL (React app)
         methods: ["GET", "POST"],
         allowedHeaders: ["Content-Type", "Authorization"],
         credentials: true, // Allow cookies if needed
@@ -31,7 +31,7 @@ app.use(express.json());
 
 // CORS middleware
 app.use(cors({
-    origin: ["http://localhost:3000", "https://ef13-47-199-12-99.ngrok-free.app"],
+    origin: ["http://localhost:3000", "https://4b9c-47-199-12-99.ngrok-free.app"],
     methods: ["GET", "POST"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,
@@ -123,7 +123,7 @@ app.post("/token", (req, res) => {
   
     const grant = new VoiceGrant({
       outgoingApplicationSid: config.twimlAppSid,
-      incomingAllow: true, 
+      incomingAllow: true,
     });
   
     accessToken.addGrant(grant);
@@ -203,41 +203,168 @@ app.post("/token", (req, res) => {
 //   res.send(twiml.toString());
 // });
 
+// Add a map to track pending calls
+const pendingCalls = new Map();
+
+io.on("connection", (socket) => {
+    console.log("User connected:", socket.id);
+
+    // When a user joins, store their online status
+    socket.on("join", (userId, username) => {
+        if (!userId || !username) {
+            console.error(`Missing userId or username in join event. Received: userId=${userId}, username=${username}`);
+            return;
+        }
+    
+        onlineUsers[username] = { 
+            id: userId, 
+            username: username, 
+            socketId: socket.id 
+        };
+        
+        console.log(`User ${username} joined with ID: ${userId}`);
+        console.log('Current online users:', onlineUsers);
+    
+        // Emit the updated list of online users to all clients
+        io.emit("onlineUsers", Object.values(onlineUsers));
+    });
+    
+
+    // Modify the callUser event handler
+    socket.on("callUser", ({ from, to }) => {
+        console.log(`Call from ${from} to ${to}`);
+        
+        // Check if it's a phone number
+        if (isAValidPhoneNumber(to)) {
+            // For phone numbers, proceed directly without checking online status
+            pendingCalls.set(to, { from, status: 'accepted' });
+            io.emit("callStatus", { accepted: true });
+            return;
+        }
+
+        // For usernames, check if they're online
+        const targetUser = Object.values(onlineUsers).find(user => user.username === to);
+        if (targetUser) {
+            pendingCalls.set(to, { from, status: 'pending' });
+            io.to(targetUser.socketId).emit("incomingCall", { from });
+        } else {
+            // Emit back to caller that user is offline
+            const callerSocket = Object.values(onlineUsers).find(user => user.username === from);
+            if (callerSocket) {
+                io.to(callerSocket.socketId).emit("callStatus", { 
+                    accepted: false, 
+                    error: "User is offline" 
+                });
+            }
+        }
+    });
+
+    // Modify the callResponse event handler
+    socket.on("callResponse", ({ to, from, accepted }) => {
+        console.log(`Call response from ${from} to ${to}: ${accepted ? "Accepted" : "Rejected"}`);
+        console.log('Current pending calls before update:', pendingCalls);
+        
+        if (accepted) {
+            // Store both directions of the call to handle the voice endpoint correctly
+            pendingCalls.set(from, { from: to, status: 'accepted' });
+            pendingCalls.set(to, { from, status: 'accepted' });
+            
+            console.log('Updated pending calls:', pendingCalls);
+        } else {
+            pendingCalls.delete(from);
+            pendingCalls.delete(to);
+        }
+
+        // Find and notify the original caller
+        const callerSocket = Object.values(onlineUsers).find(user => user.username === to);
+        if (callerSocket) {
+            io.to(callerSocket.socketId).emit("callStatus", { accepted });
+        }
+    });
+
+    // When the user logs out (from frontend)
+    socket.on("logout", (userId) => {
+        console.log(`User with ID ${userId} logged out`);
+
+        // Find and remove the user from onlineUsers
+        if (onlineUsers[userId]) {
+            delete onlineUsers[userId];
+            console.log(`Removed user ${userId} from online users`);
+            
+            // Emit updated online users list
+            io.emit("onlineUsers", Object.values(onlineUsers));
+        }
+    });
+
+
+
+    // Handle disconnection and remove the user from the online list
+    socket.on("disconnect", () => {
+        console.log("User disconnected:", socket.id);
+
+        // Find the user by socket id and remove them from onlineUsers
+        const disconnectedUser = Object.values(onlineUsers).find(user => user.socketId === socket.id);
+        
+        if (disconnectedUser) {
+            console.log(`User ${disconnectedUser.username} (ID: ${disconnectedUser.id}) disconnected`);
+            delete onlineUsers[disconnectedUser.username];
+            
+            // Emit updated list of online users
+            io.emit("onlineUsers", Object.values(onlineUsers));
+            console.log("Updated online users:", onlineUsers);
+        }
+    });
+});
+
+// Modify the /voice endpoint
 app.post("/voice", (req, res) => {
-  console.log("Received /voice request:");
-  console.log("Request body:", req.body); // Log the entire request body for debugging
+    console.log("Received /voice request:");
+    console.log("Request body:", req.body);
+    console.log("Request params:", req.params);
+    console.log("Request query:", req.query);
 
-  const toNumberOrClientName = req.body.To;
-  
-  const callerId = config.callerId;
-  let twiml = new VoiceResponse();
+    // Get parameters from either body, params, or query
+    const toNumberOrClientName = req.body.To || req.query.To;
+    const fromUser = req.body.From || req.query.From;
+    const callerId = config.callerId;
+    
+    console.log("Processing call with:", {
+        to: toNumberOrClientName,
+        from: fromUser,
+        callerId
+    });
 
-  // Log the values being used for decision making
-  console.log("toNumberOrClientName:", toNumberOrClientName);
-  console.log("callerId:", callerId);
+    let twiml = new VoiceResponse();
 
-  if (toNumberOrClientName === callerId) {
-      console.log("Dialing client:", req.body.From);
-      let dial = twiml.dial();
-      dial.client(req.body.From); 
-  } else if (req.body.To) {
-      console.log("Dialing number or client:", toNumberOrClientName);
-      let dial = twiml.dial({ callerId });
+    // Check if either user has an accepted call
+    const fromPending = pendingCalls.get(fromUser);
+    const toPending = pendingCalls.get(toNumberOrClientName);
+    
+    console.log("Pending calls status:", {
+        fromPending,
+        toPending,
+        allPendingCalls: pendingCalls
+    });
 
-      const attr = isAValidPhoneNumber(toNumberOrClientName)
-          ? "number"
-          : "client";
-      console.log(`Using attribute ${attr} to dial ${toNumberOrClientName}`);
-      dial[attr]({}, toNumberOrClientName);
-  } else {
-      console.log("No valid 'To' field found. Saying 'Thanks for calling!'");
-      twiml.say("Thanks for calling!");
-  }
+    if ((!fromPending && !toPending) || 
+        (fromPending?.status !== 'accepted' && toPending?.status !== 'accepted')) {
+        console.log("Call not accepted yet or already rejected");
+        twiml.say("The call has not been accepted yet or was rejected.");
+        twiml.hangup();
+    } else {
+        console.log("Call is accepted, connecting users");
+        const dial = twiml.dial({ callerId });
+        
+        // Always use client for both parties as we're doing client-to-client calling
+        if (toNumberOrClientName) {
+            console.log("Dialing client:", toNumberOrClientName);
+            dial.client(toNumberOrClientName);
+        }
+    }
 
-  console.log("Generated TwiML response:", twiml.toString());
-
-  res.type("text/xml");
-  res.send(twiml.toString());
+    console.log("Generated TwiML response:", twiml.toString());
+    res.type("text/xml");
+    res.send(twiml.toString());
 });
 
 // Helper function
@@ -353,81 +480,6 @@ app.get("/reports", (req, res) => {
 
 // In-memory storage for online users
 let onlineUsers = {};
-
-io.on("connection", (socket) => {
-    console.log("User connected:", socket.id);
-
-    // When a user joins, store their online status
-    socket.on("join", (userId, username) => {
-        if (!userId || !username) {
-            console.error(`Missing userId or username in join event. Received: userId=${userId}, username=${username}`);
-            return;
-        }
-    
-        onlineUsers[userId] = { id: userId, username: username, socketId: socket.id };
-        console.log(`User ${username} joined with ID: ${userId}`);
-    
-        io.emit("onlineUsers", Object.values(onlineUsers));
-    });
-    
-
-    // Handle incoming calls
-    socket.on("callUser", ({ from, to }) => {
-        console.log(`Call from ${from} to ${to}`);
-        if (onlineUsers[to]) {
-            io.to(onlineUsers[to].socketId).emit("incomingCall", { from });
-        } else {
-            console.warn(`User ${to} is not online.`);
-        }
-    });
-
-    // Handle call responses
-    socket.on("callResponse", ({ from, accepted }) => {
-        console.log(`Call response from ${from}: ${accepted ? "Accepted" : "Rejected"}`);
-        if (onlineUsers[from]) {
-            io.to(onlineUsers[from].socketId).emit("callStatus", { accepted });
-        }
-    });
-
-    // When the user logs out (from frontend)
-    socket.on("logout", (userId) => {
-        console.log(`User with ID ${userId} logged out`);
-
-        // Find and remove the user from onlineUsers
-        if (onlineUsers[userId]) {
-            delete onlineUsers[userId];
-            console.log(`Removed user ${userId} from online users`);
-            
-            // Emit updated online users list
-            io.emit("onlineUsers", Object.values(onlineUsers));
-        }
-    });
-
-
-
-    // Handle disconnection and remove the user from the online list
-    socket.on("disconnect", () => {
-        console.log("User disconnected:", socket.id);
-
-        let disconnectedUser = null;
-
-        // Find the user by socket id and remove them from onlineUsers
-        for (const userId in onlineUsers) {
-            if (onlineUsers[userId].socketId === socket.id) {
-                disconnectedUser = onlineUsers[userId];
-                delete onlineUsers[userId];
-                break;
-            }
-        }
-
-        if (disconnectedUser) {
-            console.log(`User ${disconnectedUser.username} (ID: ${disconnectedUser.id}) disconnected`);
-            // Emit updated list of online users
-            io.emit("onlineUsers", Object.values(onlineUsers));
-            console.log("Emitting updated online users:", Object.values(onlineUsers));
-        }
-    });
-});
 
 // Start server
 const PORT = process.env.PORT || 3001;

@@ -19,30 +19,34 @@
   width: 100%;
   overflow-y: auto;
   flex-grow: 1;
-  padding-left: 0;
+  margin: 1rem 0;
+}
+
+.user-list ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  width: 95%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 
 .user-list li {
   list-style-type: none;
-  padding: 0.5rem 0;
-}
-
-
-.logout-button {
-  margin-top: 1rem;
-  padding: 0.75rem 1.5rem;
-  background-color: #e53e3e;
-  color: white;
-  border-radius: 8px;
-  border: none;
+  padding: 0;
+  width: 90%;
   cursor: pointer;
 }
 
-.logout-button:hover {
-  background-color: #c53030;
+.user-list .user-card {
+  width: 100%;
+  margin: 5px 0;
 }
 
 .call-input {
+  width: 90%;
+  margin: 0 auto;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
@@ -59,46 +63,88 @@
   width: auto;
 }
 
-.call-input button {
-  padding: 0.75rem;
-  background-color: #3182ce;
-  color: white;
+.call-controls {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+  margin-top: 1rem;
+}
+
+.call-controls button {
+  padding: 0.5rem 1rem;
+  font-size: 0.9rem;
+  flex: 1;
+  max-width: 100px;
+}
+
+.logs-box {
+  width: 90%;
+  margin: 0.5rem auto;
+  max-height: 150px;
+  overflow-y: auto;
+  flex-grow: 0;
+  padding: 0.5rem;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  scroll-behavior: smooth;
+}
+
+.logs-box p {
+  margin: 0.25rem 0;
+  font-size: 0.85rem;
+}
+
+/* Add this to ensure logs scroll to bottom */
+.logs-box > div {
+  display: flex;
+  flex-direction: column-reverse;
+}
+
+.logs-box::-webkit-scrollbar {
+  width: 6px;
+}
+
+.logs-box::-webkit-scrollbar-thumb {
+  background-color: #ccc;
+  border-radius: 3px;
+}
+
+.call-buttons {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.call-buttons button {
+  flex: 1;
+  padding: 0.5rem;
+  font-size: 0.9rem;
+}
+
+/* Update button styles to be more compact */
+button {
+  padding: 0.5rem 1rem;
   border-radius: 8px;
   border: none;
   cursor: pointer;
-  font-size: 1rem;
+  font-size: 0.9rem;
+  transition: background-color 0.2s;
 }
-
-.call-input button:hover {
-  background-color: #2b6cb0;
-}
-
 
 .initialize-button {
-  padding: 0.75rem;
   background-color: #38a169;
   color: white;
-  border-radius: 8px;
-  border: none;
-  cursor: pointer;
-  font-size: 1rem;
-  margin-bottom: 1rem;
+  margin-bottom: 0.5rem;
 }
 
 .initialize-button:hover {
   background-color: #2f855a;
 }
 
-
 .mute-button {
-  padding: 0.75rem;
   background-color: #ed8936;
   color: white;
-  border-radius: 8px;
-  border: none;
-  cursor: pointer;
-  font-size: 1rem;
-  margin-top: 1rem;
 }
 
 .mute-button:hover {
@@ -106,52 +152,62 @@
 }
 
 .logout-button {
-  margin-top: 1rem;
-  padding: 0.75rem;
-  background-color: #e53e3e; 
+  margin-top: 0.5rem;
+  background-color: #e53e3e;
   color: white;
-  border-radius: 8px;
-  border: none;
-  cursor: pointer;
-  font-size: 1rem;
 }
 
 .logout-button:hover {
-  background-color: #c53030; 
+  background-color: #c53030;
 }
 
+.call-popup {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background-color: white;
+  padding: 1.5rem;
+  border-radius: 12px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1), 0 1px 3px rgba(0, 0, 0, 0.08);
+  text-align: center;
+  width: 80%;
+  z-index: 1000;
+  border: 2px solid #e0e0e0;
+}
 
-.logs-box {
-  max-height: 200px; 
-  overflow-y: auto;
-  flex-grow: 0;
-  padding: 1rem;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
-  margin-top: 1rem;
+.call-popup p {
   margin-bottom: 1rem;
+  font-size: 1rem;
+  color: #2d3748;
+}
+
+.call-popup-buttons {
   display: flex;
-  flex-direction: column;
-  justify-content: flex-start;
+  gap: 0.75rem;
+  justify-content: center;
 }
 
-.logs-box::-webkit-scrollbar {
-  width: 8px;
+.call-popup button {
+  flex: 1;
+  max-width: 100px;
+  font-weight: 500;
 }
 
-.logs-box::-webkit-scrollbar-thumb {
-  background-color: #ccc;
-  border-radius: 4px;
+.call-popup button:first-child {
+  background-color: #38a169;
+  color: white;
 }
 
-.sidebar {
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-start;
-  height: 100vh;
-  overflow: hidden;
+.call-popup button:first-child:hover {
+  background-color: #2f855a;
 }
 
-.sidebar .call-input {
-  margin-bottom: auto; 
+.call-popup button:last-child {
+  background-color: #e53e3e;
+  color: white;
+}
+
+.call-popup button:last-child:hover {
+  background-color: #c53030;
 }

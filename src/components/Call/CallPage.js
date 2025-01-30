@@ -23,19 +23,105 @@ const CallsPage = ({ user, setUser }) => {
     socket.on('onlineUsers', (users) => {
       if (Array.isArray(users)) {
         const filteredUsers = users.filter((u) => u.id !== user.id);
+        console.log('Received online users:', filteredUsers);
         setOnlineUsers(filteredUsers);
-      } else {
-        console.error('Invalid online users data:', users);
       }
     });
 
+    socket.on('incomingCall', ({ from }) => {
+      console.log('Received incoming call from:', from);
+      logMessage(`Incoming call from ${from}`);
+      setIncomingCall({ from });
+    });
+
+    socket.on('callStatus', ({ accepted, error }) => {
+      console.log('Received call status:', { accepted, error });
+      if (error) {
+        logMessage(`Call failed: ${error}`);
+        return;
+      }
+      
+      if (accepted) {
+        logMessage('Call was accepted, connecting...');
+        if (device && phoneNumberOrUsername) {
+          try {
+            const params = {
+              To: phoneNumberOrUsername,
+              From: user.username,
+              Direction: 'outbound',
+              CallerId: user.username
+            };
+            
+            logMessage(`Attempting to call ${params.To} ...`);
+            device.connect({ params })
+              .then(newCall => {
+                newCall.on('accept', () => {
+                  logMessage('Call in progress...');
+                  setCall(newCall);
+                });
+
+                newCall.on('disconnect', () => {
+                  logMessage('Call disconnected.');
+                  setCall(null);
+                });
+
+                newCall.on('cancel', () => {
+                  logMessage('Call cancelled.');
+                  setCall(null);
+                });
+              })
+              .catch(error => {
+                logMessage('Error making call: ' + error.message);
+              });
+          } catch (error) {
+            logMessage('Error initiating call: ' + error.message);
+          }
+        }
+      } else {
+        logMessage('Call was rejected');
+      }
+    });
+
+    console.log('Emitting join event for user:', user);
     socket.emit('join', user.id, user.username);
 
+    // Store event handler functions
+    const handleIncoming = (incomingTwilioCall) => {
+      logMessage(`Incoming Twilio call from ${incomingTwilioCall.parameters.From}`);
+      setCall(incomingTwilioCall);
+    };
+
+    const handleError = (error) => {
+      logMessage('Device Error: ' + error.message);
+    };
+
+    const handleReady = () => {
+      logMessage('Twilio Device ready.');
+    };
+
+    // Set up device event listeners
+    if (device) {
+      device.on('incoming', handleIncoming);
+      device.on('error', handleError);
+      device.on('ready', handleReady);
+    }
+
+    // Cleanup function
     return () => {
       socket.off('onlineUsers');
+      socket.off('callStatus');
+      socket.off('incomingCall');
+      
+      if (device) {
+        device.off('incoming', handleIncoming);
+        device.off('error', handleError);
+        device.off('ready', handleReady);
+      }
+      
+      console.log('Emitting logout event for user:', user.id);
       socket.emit('logout', user.id);
     };
-  }, [user]);
+  }, [user, device, phoneNumberOrUsername]);
 
   const logMessage = (message) => {
     setLog((prev) => [...prev, message]);
@@ -86,75 +172,86 @@ const CallsPage = ({ user, setUser }) => {
       return;
     }
 
-    const params = {
-      To: phoneNumberOrUsername,
-      From: user.username,
-    };
-    console.log('Making outgoing call with params:', params);
-    if (device) {
-      logMessage(`Attempting to call ${params.To} ...`);
+    socket.emit('callUser', {
+      from: user.username,
+      to: phoneNumberOrUsername
+    });
 
-      try {
-        const response = await axios.post('http://localhost:3001/voice', params);
-        const twimlUrl = response.data.twimlUrl;
-
-        const newCall = await device.connect({ TwiMLUrl: twimlUrl });
-        console.log('Returned call object:', newCall);
-
-        if (newCall && newCall.on) {
-          newCall.on('accept', () => logMessage('Call connected.'));
-          newCall.on('disconnect', () => logMessage('Call disconnected.'));
-          setCall(newCall);
-        } else {
-          logMessage('Failed to initiate call. No valid call object returned.');
-        }
-      } catch (error) {
-        logMessage('Error initiating call: ' + error.message);
-      }
-    } else {
-      logMessage('Twilio device is not initialized.');
-    }
+    logMessage(`Calling ${phoneNumberOrUsername}...`);
   };
 
-  const hangupCall = () => {
-    if (call) {
-      call.disconnect();
-      setCall(null);
-    }
-  };
-
-  const handleIncomingCall = (incoming) => {
-    logMessage(`Incoming call from ${incoming.parameters.From}`);
-    setIncomingCall(incoming);
+  const handleIncomingCall = (incomingCall) => {
+    logMessage(`Incoming call from ${incomingCall.parameters.From}`);
+    setIncomingCall(incomingCall);
   };
 
   const acceptIncomingCall = () => {
     if (incomingCall) {
-      logMessage('Accepted incoming call.');
-      incomingCall.accept();
-      setCall(incomingCall);
+      logMessage('Accepting call...');
+      
+      socket.emit('callResponse', {
+        from: user.username,
+        to: incomingCall.from,
+        accepted: true
+      });
+
+      if (device) {
+        const params = {
+          To: incomingCall.from,
+          From: user.username,
+          Direction: 'inbound',
+          CallerId: incomingCall.from
+        };
+
+        device.connect({ params })
+          .then(newCall => {
+            setCall(newCall);
+            newCall.on('accept', () => logMessage('Call connected'));
+            newCall.on('disconnect', () => {
+              logMessage('Call disconnected');
+              setCall(null);
+            });
+          })
+          .catch(error => logMessage('Error connecting: ' + error.message));
+      }
+
       setIncomingCall(null);
     }
   };
 
   const rejectIncomingCall = () => {
     if (incomingCall) {
-      logMessage('Rejected incoming call.');
-      incomingCall.reject();
+      logMessage('Rejecting call...');
+      
+      socket.emit('callResponse', {
+        from: user.username,
+        to: incomingCall.from,
+        accepted: false
+      });
+
       setIncomingCall(null);
+    }
+  };
+
+  const hangupCall = () => {
+    if (call) {
+      call.disconnect();
+      logMessage('Call disconnected.');
+      setCall(null);
     }
   };
 
   const handleMuteToggle = () => {
     if (call) {
       if (isMuted) {
-        call.unmute(); 
-        logMessage('Call unmuted');
+        call.mute(false);
+        setIsMuted(false);
+        logMessage('Unmuted call');
       } else {
-        call.mute(); 
-        logMessage('Call muted');
+        call.mute(true);
+        setIsMuted(true);
+        logMessage('Muted call');
       }
-      setIsMuted(!isMuted);
     }
   };
 
@@ -181,31 +278,43 @@ const CallsPage = ({ user, setUser }) => {
           value={phoneNumberOrUsername}
           onChange={(e) => setPhoneNumberOrUsername(e.target.value)}
         />
-        <button onClick={makeOutgoingCall} disabled={!device}>Call</button>
-        <button onClick={hangupCall} disabled={!call}>Hang Up</button>
+        {!call ? (
+          <button onClick={makeOutgoingCall} disabled={!device}>Call</button>
+        ) : (
+          <div className="call-buttons">
+            <button onClick={hangupCall}>Hang Up</button>
+            <button onClick={handleMuteToggle} className="mute-button">
+              {isMuted ? 'Unmute' : 'Mute'}
+            </button>
+          </div>
+        )}
       </div>
       <div className="user-list">
         <h3>Online Users:</h3>
         <ul>
           {onlineUsers.map((onlineUser) => (
-            <li key={onlineUser.id} onClick={() => setPhoneNumberOrUsername(onlineUser.username)}>
-              <UserCard name={onlineUser.username || `User ${onlineUser.id}`} status="Online" />
+            <li 
+              key={onlineUser.id} 
+              onClick={() => {
+                console.log('Setting phone number to:', onlineUser.username);
+                setPhoneNumberOrUsername(onlineUser.username);
+              }}
+            >
+              <UserCard 
+                name={onlineUser.username || `User ${onlineUser.id}`} 
+                status="Online" 
+              />
             </li>
           ))}
         </ul>
       </div>
       {incomingCall && (
         <div className="call-popup">
-          <p>Incoming call from {incomingCall.parameters.From}</p>
-          <button onClick={acceptIncomingCall}>Accept</button>
-          <button onClick={rejectIncomingCall}>Reject</button>
-        </div>
-      )}
-      {call && (
-        <div className="call-controls">
-          <button onClick={handleMuteToggle} className="mute-button">
-            {isMuted ? 'Unmute' : 'Mute'}
-          </button>
+          <p>Incoming call from {incomingCall.from}</p>
+          <div className="call-popup-buttons">
+            <button onClick={acceptIncomingCall}>Accept</button>
+            <button onClick={rejectIncomingCall}>Reject</button>
+          </div>
         </div>
       )}
       <div className="logs-box">
